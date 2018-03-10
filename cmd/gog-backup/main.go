@@ -93,7 +93,7 @@ func generateGames(games chan<- int64, finished <-chan bool, client *gog.Client)
 
 func safePath(path string) string {
 	return strings.Replace(
-		strings.Replace(path, "/", "", -1),
+		strings.Replace(strings.TrimSpace(path), "/", "", -1),
 		":", " -", -1)
 }
 
