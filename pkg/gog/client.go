@@ -69,6 +69,12 @@ func (client *Client) refreshAccess() error {
 	return nil
 }
 
+// GameList retrieves a list of id's for all games the current user owns.
+//
+// Many of the ID's returned don't seem to actually be games or are otherwise non-existent entities.
+//
+// See also GetFilteredProducts()
+// See also https://gogapidocs.readthedocs.io/en/latest/account.html#get--user-data-games
 func (client *Client) GameList() ([]int64, error) {
 	client.refreshAccess()
 	var result = new(gameList)
@@ -80,6 +86,7 @@ func (client *Client) GameList() ([]int64, error) {
 	return result.Owned, nil
 }
 
+// GetFilteredProducts returns paginated search results for games or movies purchased by the current user.
 func (client *Client) GetFilteredProducts(mediaType MediaType, page int) (*FilteredProductPage, error) {
 	client.refreshAccess()
 	var result = new(FilteredProductPage)
@@ -91,6 +98,7 @@ func (client *Client) GetFilteredProducts(mediaType MediaType, page int) (*Filte
 	return result, nil
 }
 
+// GameDetails returns detailed information about a single game.
 func (client *Client) GameDetails(id int64) (*GameDetails, error) {
 	client.refreshAccess()
 	var result = new(GameDetails)
