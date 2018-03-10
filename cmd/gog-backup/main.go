@@ -39,6 +39,10 @@ type Download struct {
 func main() {
 	iniflags.Parse()
 
+	if *refreshToken == "" {
+		log.Fatalln("You must provide a refresh token for GoG.com via -refreshToken.")
+	}
+
 	client := &gog.Client{
 		Client:       http.DefaultClient,
 		RefreshToken: *refreshToken,
