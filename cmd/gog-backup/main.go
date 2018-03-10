@@ -52,7 +52,7 @@ func main() {
 	finished := make(chan bool)
 	gameInfo := make(chan int64)
 	gameDownload := make(chan *Download)
-	extraDownload := make(chan *Download)
+	extraDownload := make(chan *Download, 10)
 
 	go signalHandler(finished)
 	go generateGames(gameInfo, finished, client)
@@ -119,6 +119,16 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *Download, extraDownlo
 			for i := 0; i < len(games); i++ {
 				path := games[i].Path
 				game := games[i].Details
+
+				for _, extra := range game.Extras {
+					extraDownload <- &Download{
+						Name:    fmt.Sprintf("%s %s", color.LightPurple("Extra for "+game.Title+": "+extra.Name), color.LightYellow("["+extra.Size+"]")),
+						URL:     gog.EmbedEndpoint + extra.ManualDownloadURL,
+						File:    path + "/Extras",
+						Version: extra.Version,
+					}
+				}
+
 				if len(game.Downloads) > 0 {
 					download := game.Downloads[0]
 					for _, d := range download.Platforms.Windows {
@@ -144,15 +154,6 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *Download, extraDownlo
 							File:    path + "/Linux",
 							Version: d.Version,
 						}
-					}
-				}
-
-				for _, extra := range game.Extras {
-					extraDownload <- &Download{
-						Name:    fmt.Sprintf("%s %s", color.LightPurple("Extra for "+game.Title+": "+extra.Name), color.LightYellow("["+extra.Size+"]")),
-						URL:     gog.EmbedEndpoint + extra.ManualDownloadURL,
-						File:    path + "/Extras",
-						Version: extra.Version,
 					}
 				}
 
@@ -194,7 +195,11 @@ func download(downloads <-chan *Download, client *gog.Client) {
 			continue
 		}
 
-		fmt.Printf("%s (version: %s)\n  %s -> %s\n", d.Name, color.Purple(d.Version), color.LightBlue(d.URL), color.Green(path))
+		version := ""
+		if d.Version != "" {
+			version = " (version: " + color.Purple(d.Version) + ")"
+		}
+		fmt.Printf("%s%s\n  %s -> %s\n", d.Name, version, color.LightBlue(d.URL), color.Green(path))
 		err = downloadFile(reader, path, filename)
 		if err != nil {
 			log.Printf("Unable to download file: %+v", err)
