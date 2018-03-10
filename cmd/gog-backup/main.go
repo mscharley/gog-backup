@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bclicn/color"
 	"github.com/mscharley/gog-backup/pkg/gog"
 	"github.com/vharitonsky/iniflags"
 )
@@ -102,7 +103,7 @@ func safePath(path string) string {
 
 func fetchDetails(games <-chan int64, gameDownload chan<- *Download, extraDownload chan<- *Download, client *gog.Client) {
 	for id := range games {
-		fmt.Printf("Fetching details for %d\n", id)
+		log.Printf("Fetching details for %d", id)
 		result, err := client.GameDetails(id)
 		if err != nil {
 			log.Printf("Unable for fetch details for %d: %+v", id, err)
@@ -122,7 +123,7 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *Download, extraDownlo
 					download := game.Downloads[0]
 					for _, d := range download.Platforms.Windows {
 						gameDownload <- &Download{
-							Name:    fmt.Sprintf("%s [Windows] [%s]", d.Name, d.Size),
+							Name:    fmt.Sprintf("%s %s %s", color.LightPurple(d.Name), color.Red("[Windows]"), color.LightYellow("["+d.Size+"]")),
 							URL:     gog.EmbedEndpoint + d.ManualDownloadURL,
 							File:    path + "/Windows",
 							Version: d.Version,
@@ -130,7 +131,7 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *Download, extraDownlo
 					}
 					for _, d := range download.Platforms.Mac {
 						gameDownload <- &Download{
-							Name:    fmt.Sprintf("%s [Mac] [%s]", d.Name, d.Size),
+							Name:    fmt.Sprintf("%s %s %s", color.LightPurple(d.Name), color.Red("[Mac]"), color.LightYellow("["+d.Size+"]")),
 							URL:     gog.EmbedEndpoint + d.ManualDownloadURL,
 							File:    path + "/Mac",
 							Version: d.Version,
@@ -138,7 +139,7 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *Download, extraDownlo
 					}
 					for _, d := range download.Platforms.Linux {
 						gameDownload <- &Download{
-							Name:    fmt.Sprintf("%s [Linux] [%s]", d.Name, d.Size),
+							Name:    fmt.Sprintf("%s %s %s", color.LightPurple(d.Name), color.Red("[Linux]"), color.LightYellow("["+d.Size+"]")),
 							URL:     gog.EmbedEndpoint + d.ManualDownloadURL,
 							File:    path + "/Linux",
 							Version: d.Version,
@@ -148,7 +149,7 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *Download, extraDownlo
 
 				for _, extra := range game.Extras {
 					extraDownload <- &Download{
-						Name:    fmt.Sprintf("Extra for %s: %s [%s]", game.Title, extra.Name, extra.Size),
+						Name:    fmt.Sprintf("%s %s", color.LightPurple("Extra for "+game.Title+": "+extra.Name), color.LightYellow("["+extra.Size+"]")),
 						URL:     gog.EmbedEndpoint + extra.ManualDownloadURL,
 						File:    path + "/Extras",
 						Version: extra.Version,
@@ -172,7 +173,6 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *Download, extraDownlo
 func download(downloads <-chan *Download, client *gog.Client) {
 	for d := range downloads {
 		path := *targetDir + d.File
-		fmt.Printf("%s (version: %s)\n  %s -> %s\n", d.Name, d.Version, d.URL, path)
 
 		filename, reader, err := client.DownloadFile(d.URL)
 		if err != nil {
@@ -194,6 +194,7 @@ func download(downloads <-chan *Download, client *gog.Client) {
 			continue
 		}
 
+		fmt.Printf("%s (version: %s)\n  %s -> %s\n", d.Name, color.Purple(d.Version), color.LightBlue(d.URL), color.Green(path))
 		err = downloadFile(reader, path, filename)
 		if err != nil {
 			log.Printf("Unable to download file: %+v", err)
