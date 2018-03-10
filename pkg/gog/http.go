@@ -26,6 +26,8 @@ func (c *Client) authenticatedGet(URL string, result interface{}) error {
 	return nil
 }
 
+// DownloadFile initiates a download of a file from GoG and returns a filename and ReadCloser
+// to control the download.
 func (c *Client) DownloadFile(URL string) (string, io.ReadCloser, error) {
 	request, err := http.NewRequest("GET", URL, nil)
 	if err != nil {

@@ -59,6 +59,7 @@ type GameDownload struct {
 	ManualDownloadURL string `json:"manualUrl"`
 	DownloaderURL     string `json:"downloaderUrl"`
 	Name              string `json:"name"`
+	Version           string `json:"version"`
 	Type              string `json:"type"`
 	Info              int    `json:"info"`
 	// This is a textual representation of the size of the download, eg. "6MB"

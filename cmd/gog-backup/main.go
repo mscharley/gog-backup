@@ -4,11 +4,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/mscharley/gog-backup/pkg/gog"
 	"github.com/vharitonsky/iniflags"
@@ -24,9 +27,10 @@ var (
 )
 
 type Download struct {
-	Name string
-	URL  string
-	File string
+	Name    string
+	URL     string
+	File    string
+	Version string
 }
 
 func main() {
@@ -41,11 +45,13 @@ func main() {
 		log.Fatalf("login error: %+v", err)
 	}
 
+	finished := make(chan bool)
 	gameInfo := make(chan int64)
-	gameDownload := make(chan *Download, 2)
-	extraDownload := make(chan *Download, 10)
+	gameDownload := make(chan *Download)
+	extraDownload := make(chan *Download)
 
-	go generateGames(gameInfo, client)
+	go signalHandler(finished)
+	go generateGames(gameInfo, finished, client)
 	go fetchDetails(gameInfo, gameDownload, extraDownload, client)
 
 	waitGroup.Add(4)
@@ -56,9 +62,10 @@ func main() {
 	waitGroup.Wait()
 }
 
-func generateGames(games chan<- int64, client *gog.Client) {
+func generateGames(games chan<- int64, finished <-chan bool, client *gog.Client) {
 	page := 0
 	totalPages := 1
+	defer close(games)
 	for page < totalPages {
 		page++
 		if page == 1 {
@@ -69,16 +76,19 @@ func generateGames(games chan<- int64, client *gog.Client) {
 		result, err := client.GetFilteredProducts(gog.GameMediaType, page)
 		if err != nil {
 			log.Printf("error: %+v", err)
-			close(games)
 			return
 		}
 
 		totalPages = result.TotalPages
 		for _, product := range result.Products {
-			games <- product.ID
+			select {
+			case games <- product.ID:
+				// Do nothing, keep looping.
+			case _ = <-finished:
+				return
+			}
 		}
 	}
-	close(games)
 }
 
 func safePath(path string) string {
@@ -109,32 +119,36 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *Download, extraDownlo
 					download := game.Downloads[0]
 					for _, d := range download.Platforms.Windows {
 						gameDownload <- &Download{
-							Name: fmt.Sprintf("%s [Windows] [%s]", d.Name, d.Size),
-							URL:  gog.EmbedEndpoint + d.ManualDownloadURL,
-							File: path + "/Windows",
+							Name:    fmt.Sprintf("%s [Windows] [%s]", d.Name, d.Size),
+							URL:     gog.EmbedEndpoint + d.ManualDownloadURL,
+							File:    path + "/Windows",
+							Version: d.Version,
 						}
 					}
 					for _, d := range download.Platforms.Mac {
 						gameDownload <- &Download{
-							Name: fmt.Sprintf("%s [Mac] [%s]", d.Name, d.Size),
-							URL:  gog.EmbedEndpoint + d.ManualDownloadURL,
-							File: path + "/Mac",
+							Name:    fmt.Sprintf("%s [Mac] [%s]", d.Name, d.Size),
+							URL:     gog.EmbedEndpoint + d.ManualDownloadURL,
+							File:    path + "/Mac",
+							Version: d.Version,
 						}
 					}
 					for _, d := range download.Platforms.Linux {
 						gameDownload <- &Download{
-							Name: fmt.Sprintf("%s [Linux] [%s]", d.Name, d.Size),
-							URL:  gog.EmbedEndpoint + d.ManualDownloadURL,
-							File: path + "/Linux",
+							Name:    fmt.Sprintf("%s [Linux] [%s]", d.Name, d.Size),
+							URL:     gog.EmbedEndpoint + d.ManualDownloadURL,
+							File:    path + "/Linux",
+							Version: d.Version,
 						}
 					}
 				}
 
 				for _, extra := range game.Extras {
 					extraDownload <- &Download{
-						Name: fmt.Sprintf("Extra for %s: %s [%s]", game.Title, extra.Name, extra.Size),
-						URL:  gog.EmbedEndpoint + extra.ManualDownloadURL,
-						File: path + "/Extras",
+						Name:    fmt.Sprintf("Extra for %s: %s [%s]", game.Title, extra.Name, extra.Size),
+						URL:     gog.EmbedEndpoint + extra.ManualDownloadURL,
+						File:    path + "/Extras",
+						Version: extra.Version,
 					}
 				}
 
@@ -155,7 +169,7 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *Download, extraDownlo
 func download(downloads <-chan *Download, client *gog.Client) {
 	for d := range downloads {
 		path := *targetDir + d.File
-		fmt.Printf("%s\n  %s -> %s\n", d.Name, d.URL, path)
+		fmt.Printf("%s (version: %s)\n  %s -> %s\n", d.Name, d.Version, d.URL, path)
 
 		filename, reader, err := client.DownloadFile(d.URL)
 		if err != nil {
@@ -163,9 +177,33 @@ func download(downloads <-chan *Download, client *gog.Client) {
 			continue
 		}
 
+		// Check for version information from last time.
+		versionFile := path + "/." + filename + ".version"
+		if d.Version != "" {
+			if lastVersion, _ := ioutil.ReadFile(versionFile); string(lastVersion) == d.Version {
+				fmt.Printf("Skipping %s as it is already up to date.\n", d.Name)
+				reader.Close()
+				continue
+			}
+		} else if info, _ := os.Stat(path + "/" + filename); info != nil {
+			fmt.Printf("Skipping %s as it is already downloaded.\n", d.Name)
+			reader.Close()
+			continue
+		}
+
 		err = downloadFile(reader, path, filename)
 		if err != nil {
 			log.Printf("Unable to download file: %+v", err)
+			continue
+		}
+
+		if d.Version != "" {
+			// Save version information for next time.
+			err = ioutil.WriteFile(versionFile, []byte(d.Version), 0666)
+			if err != nil {
+				log.Printf("Unable to save version file: %+v", err)
+				continue
+			}
 		}
 	}
 
@@ -192,4 +230,15 @@ func downloadFile(reader io.ReadCloser, path string, filename string) error {
 	_, err = io.Copy(writer, reader)
 
 	return err
+}
+
+func signalHandler(finished chan<- bool) {
+	c := make(chan os.Signal, 2)
+	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+
+	for {
+		signal := <-c
+		finished <- true
+		log.Printf("Received a %s signal, finishing downloads before closing.\n", signal)
+	}
 }
