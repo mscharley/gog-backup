@@ -26,6 +26,8 @@ var (
 	targetDir    = flag.String("targetDir", os.Getenv("HOME")+"/GoG", "The target directory to download to.")
 )
 
+// Download is a struct used to store details about a single download that needs to be processed. This is the data format used over the
+// internal channels.
 type Download struct {
 	Name    string
 	URL     string
@@ -39,10 +41,6 @@ func main() {
 	client := &gog.Client{
 		Client:       http.DefaultClient,
 		RefreshToken: *refreshToken,
-	}
-	err := client.RefreshAccess()
-	if err != nil {
-		log.Fatalf("login error: %+v", err)
 	}
 
 	finished := make(chan bool)
@@ -221,14 +219,20 @@ func downloadFile(reader io.ReadCloser, path string, filename string) error {
 		return err
 	}
 
-	writer, err := os.OpenFile(path+"/"+filename, os.O_WRONLY|os.O_CREATE, 0666)
+	tmpfile := path + "/." + filename + ".tmp"
+	outfile := path + "/" + filename
+	writer, err := os.OpenFile(tmpfile, os.O_WRONLY|os.O_CREATE, 0666)
 	if err != nil {
 		return err
 	}
 	defer writer.Close()
 
 	_, err = io.Copy(writer, reader)
+	if err != nil {
+		return err
+	}
 
+	os.Rename(tmpfile, outfile)
 	return err
 }
 
@@ -236,9 +240,10 @@ func signalHandler(finished chan<- bool) {
 	c := make(chan os.Signal, 2)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 
-	for {
-		signal := <-c
-		finished <- true
-		log.Printf("Received a %s signal, finishing downloads before closing.\n", signal)
-	}
+	signal := <-c
+	finished <- true
+	close(finished)
+	log.Printf("Received a %s signal, finishing downloads before closing.", signal)
+	signal = <-c
+	log.Fatalf("Received a second %s signal, closing down without cleanup.", signal)
 }

@@ -6,9 +6,9 @@ import (
 )
 
 type refreshTokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	ExpiresToken int    `json:"expires_in"`
-	UserID       string `json:"user_id"`
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int    `json:"expires_in"`
+	UserID      string `json:"user_id"`
 }
 
 type gameList struct {
