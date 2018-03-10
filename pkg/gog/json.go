@@ -29,7 +29,7 @@ type GameLanguages struct {
 	Platforms *GamePlatforms
 }
 
-func (this *GameLanguages) UnmarshalJSON(b []byte) error {
+func (gl *GameLanguages) UnmarshalJSON(b []byte) error {
 	var languages []json.RawMessage
 	err := json.Unmarshal(b, &languages)
 	if err != nil {
@@ -38,11 +38,11 @@ func (this *GameLanguages) UnmarshalJSON(b []byte) error {
 	if len(languages) != 2 {
 		return fmt.Errorf("Expected an array of length 2 but got %d", len(languages))
 	}
-	err = json.Unmarshal(languages[0], &this.Language)
+	err = json.Unmarshal(languages[0], &gl.Language)
 	if err != nil {
 		return err
 	}
-	err = json.Unmarshal(languages[1], &this.Platforms)
+	err = json.Unmarshal(languages[1], &gl.Platforms)
 	if err != nil {
 		return err
 	}

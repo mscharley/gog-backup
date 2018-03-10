@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-func (c *Client) authenticatedGet(URL string, result interface{}) error {
-	_, body, err := c.DownloadFile(URL)
+func (client *Client) authenticatedGet(URL string, result interface{}) error {
+	_, body, err := client.DownloadFile(URL)
 	if err != nil {
 		return err
 	}
@@ -28,13 +28,13 @@ func (c *Client) authenticatedGet(URL string, result interface{}) error {
 
 // DownloadFile initiates a download of a file from GoG and returns a filename and ReadCloser
 // to control the download.
-func (c *Client) DownloadFile(URL string) (string, io.ReadCloser, error) {
+func (client *Client) DownloadFile(URL string) (string, io.ReadCloser, error) {
 	request, err := http.NewRequest("GET", URL, nil)
 	if err != nil {
 		return "", nil, err
 	}
-	request.Header.Add("Authorization", "Bearer "+*c.accessToken)
-	response, err := c.Do(request)
+	request.Header.Add("Authorization", "Bearer "+*client.accessToken)
+	response, err := client.Do(request)
 	if err != nil {
 		return "", nil, err
 	}

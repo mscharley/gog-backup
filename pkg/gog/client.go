@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -25,6 +26,7 @@ type Client struct {
 	RefreshToken string
 	accessToken  *string
 	tokenExpiry  int64
+	lock         sync.Mutex
 }
 
 // MediaType is an enumeration to pick between different supported types of media in GoG.
@@ -37,11 +39,14 @@ const (
 	MovieMediaType
 )
 
-func (c *Client) refreshAccess() error {
-	if c.tokenExpiry-time.Now().Unix() > 60 {
+func (client *Client) refreshAccess() error {
+	client.lock.Lock()
+	defer client.lock.Unlock()
+	if client.tokenExpiry-time.Now().Unix() > 60 {
 		return nil
 	}
-	response, err := c.Get(AuthEndpoint + "/token?client_id=" + clientID + "&client_secret=" + clientSecret + "&grant_type=refresh_token&refresh_token=" + c.RefreshToken)
+	fmt.Println("Re-generating the access token for GoG.")
+	response, err := client.Get(AuthEndpoint + "/token?client_id=" + clientID + "&client_secret=" + clientSecret + "&grant_type=refresh_token&refresh_token=" + client.RefreshToken)
 	if err != nil {
 		return err
 	}
@@ -59,15 +64,15 @@ func (c *Client) refreshAccess() error {
 		return err
 	}
 
-	c.tokenExpiry = time.Now().Unix() + int64(login.ExpiresIn)
-	c.accessToken = &login.AccessToken
+	client.tokenExpiry = time.Now().Unix() + int64(login.ExpiresIn)
+	client.accessToken = &login.AccessToken
 	return nil
 }
 
-func (c *Client) GameList() ([]int64, error) {
-	c.refreshAccess()
+func (client *Client) GameList() ([]int64, error) {
+	client.refreshAccess()
 	var result = new(gameList)
-	err := c.authenticatedGet(EmbedEndpoint+"/user/data/games", result)
+	err := client.authenticatedGet(EmbedEndpoint+"/user/data/games", result)
 	if err != nil {
 		return nil, err
 	}
@@ -75,10 +80,10 @@ func (c *Client) GameList() ([]int64, error) {
 	return result.Owned, nil
 }
 
-func (c *Client) GetFilteredProducts(mediaType MediaType, page int) (*FilteredProductPage, error) {
-	c.refreshAccess()
+func (client *Client) GetFilteredProducts(mediaType MediaType, page int) (*FilteredProductPage, error) {
+	client.refreshAccess()
 	var result = new(FilteredProductPage)
-	err := c.authenticatedGet(fmt.Sprintf("%s/account/getFilteredProducts?mediaType=%d&page=%d", EmbedEndpoint, mediaType, page), result)
+	err := client.authenticatedGet(fmt.Sprintf("%s/account/getFilteredProducts?mediaType=%d&page=%d", EmbedEndpoint, mediaType, page), result)
 	if err != nil {
 		return nil, err
 	}
@@ -86,10 +91,10 @@ func (c *Client) GetFilteredProducts(mediaType MediaType, page int) (*FilteredPr
 	return result, nil
 }
 
-func (c *Client) GameDetails(id int64) (*GameDetails, error) {
-	c.refreshAccess()
+func (client *Client) GameDetails(id int64) (*GameDetails, error) {
+	client.refreshAccess()
 	var result = new(GameDetails)
-	err := c.authenticatedGet(fmt.Sprintf("%s/account/gameDetails/%d.json", EmbedEndpoint, id), result)
+	err := client.authenticatedGet(fmt.Sprintf("%s/account/gameDetails/%d.json", EmbedEndpoint, id), result)
 	if err != nil {
 		return nil, err
 	}

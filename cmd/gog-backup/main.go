@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/mscharley/gog-backup/pkg/gog"
 	"github.com/vharitonsky/iniflags"
@@ -244,6 +245,11 @@ func signalHandler(finished chan<- bool) {
 	finished <- true
 	close(finished)
 	log.Printf("Received a %s signal, finishing downloads before closing.", signal)
-	signal = <-c
-	log.Fatalf("Received a second %s signal, closing down without cleanup.", signal)
+	timeout := time.After(time.Second * 60)
+	select {
+	case signal = <-c:
+		log.Fatalf("Received a second %s signal, closing down without cleanup.", signal)
+	case _ = <-timeout:
+		log.Fatalln("Closing after waiting 60 seconds.")
+	}
 }
