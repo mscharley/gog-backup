@@ -6,10 +6,11 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"strings"
 )
 
-func (c *Client) authenticatedGet(url string, result interface{}) error {
-	body, err := c.DownloadFile(url)
+func (c *Client) authenticatedGet(URL string, result interface{}) error {
+	_, body, err := c.DownloadFile(URL)
 	if err != nil {
 		return err
 	}
@@ -25,19 +26,21 @@ func (c *Client) authenticatedGet(url string, result interface{}) error {
 	return nil
 }
 
-func (c *Client) DownloadFile(url string) (io.ReadCloser, error) {
-	request, err := http.NewRequest("GET", url, nil)
+func (c *Client) DownloadFile(URL string) (string, io.ReadCloser, error) {
+	request, err := http.NewRequest("GET", URL, nil)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	request.Header.Add("Authorization", "Bearer "+*c.accessToken)
 	response, err := c.Do(request)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	if response.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("Unexpected status code: %d", response.StatusCode)
+		return "", nil, fmt.Errorf("Unexpected status code: %d", response.StatusCode)
 	}
 
-	return response.Body, nil
+	segments := strings.Split(response.Request.URL.Path, "/")
+
+	return segments[len(segments)-1], response.Body, nil
 }
