@@ -3,8 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -15,6 +13,8 @@ import (
 	"time"
 
 	"github.com/bclicn/color"
+	"github.com/mscharley/gog-backup/internal/gog-backup/backend"
+	"github.com/mscharley/gog-backup/internal/gog-backup/backend/local"
 	"github.com/mscharley/gog-backup/pkg/gog"
 	"github.com/vharitonsky/iniflags"
 )
@@ -24,18 +24,11 @@ var (
 )
 
 var (
+	backendOpt   = flag.String("backend", "local", "Which backend to use for processing files to backup. The default, local, uses a folder on your hard drive.")
 	refreshToken = flag.String("refreshToken", "", "A refresh token for the GoG API.")
-	targetDir    = flag.String("targetDir", os.Getenv("HOME")+"/GoG", "The target directory to download to.")
+	retries      = flag.Int("retries", 3, "How many times to retry downloading a file before giving up.")
+	targetDir    = flag.String("targetDir", os.Getenv("HOME")+"/GoG", "The target directory to download to. This means different things to different backends.")
 )
-
-// Download is a struct used to store details about a single download that needs to be processed. This is the data format used over the
-// internal channels.
-type Download struct {
-	Name    string
-	URL     string
-	File    string
-	Version string
-}
 
 func main() {
 	iniflags.Parse()
@@ -51,18 +44,26 @@ func main() {
 
 	finished := make(chan bool)
 	gameInfo := make(chan int64)
-	gameDownload := make(chan *Download)
-	extraDownload := make(chan *Download, 10)
+	gameDownload := make(chan *backend.GogFile)
+	extraDownload := make(chan *backend.GogFile, 10)
 
 	go signalHandler(finished)
 	go generateGames(gameInfo, finished, client)
 	go fetchDetails(gameInfo, gameDownload, extraDownload, client)
 
+	var be backend.Handler
+	switch *backendOpt {
+	case "local":
+		be = local.DownloadFile(targetDir, retries)
+	default:
+		log.Fatalf("Unknown backend (%s): valid values are; local", *backendOpt)
+	}
 	waitGroup.Add(4)
-	go download(gameDownload, client)
-	go download(gameDownload, client)
-	go download(extraDownload, client)
-	go download(extraDownload, client)
+
+	go be(gameDownload, waitGroup, client)
+	go be(gameDownload, waitGroup, client)
+	go be(extraDownload, waitGroup, client)
+	go be(extraDownload, waitGroup, client)
 	waitGroup.Wait()
 }
 
@@ -101,7 +102,7 @@ func safePath(path string) string {
 		":", " -", -1)
 }
 
-func fetchDetails(games <-chan int64, gameDownload chan<- *Download, extraDownload chan<- *Download, client *gog.Client) {
+func fetchDetails(games <-chan int64, gameDownload chan<- *backend.GogFile, extraDownload chan<- *backend.GogFile, client *gog.Client) {
 	for id := range games {
 		log.Printf("Fetching details for %d", id)
 		result, err := client.GameDetails(id)
@@ -121,7 +122,7 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *Download, extraDownlo
 				game := games[i].Details
 
 				for _, extra := range game.Extras {
-					extraDownload <- &Download{
+					extraDownload <- &backend.GogFile{
 						Name:    fmt.Sprintf("%s %s", color.LightPurple("Extra for "+game.Title+": "+extra.Name), color.LightYellow("["+extra.Size+"]")),
 						URL:     gog.EmbedEndpoint + extra.ManualDownloadURL,
 						File:    path + "/Extras",
@@ -132,7 +133,7 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *Download, extraDownlo
 				if len(game.Downloads) > 0 {
 					download := game.Downloads[0]
 					for _, d := range download.Platforms.Windows {
-						gameDownload <- &Download{
+						gameDownload <- &backend.GogFile{
 							Name:    fmt.Sprintf("%s %s %s", color.LightPurple(d.Name), color.Red("[Windows]"), color.LightYellow("["+d.Size+"]")),
 							URL:     gog.EmbedEndpoint + d.ManualDownloadURL,
 							File:    path + "/Windows",
@@ -140,7 +141,7 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *Download, extraDownlo
 						}
 					}
 					for _, d := range download.Platforms.Mac {
-						gameDownload <- &Download{
+						gameDownload <- &backend.GogFile{
 							Name:    fmt.Sprintf("%s %s %s", color.LightPurple(d.Name), color.Red("[Mac]"), color.LightYellow("["+d.Size+"]")),
 							URL:     gog.EmbedEndpoint + d.ManualDownloadURL,
 							File:    path + "/Mac",
@@ -148,7 +149,7 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *Download, extraDownlo
 						}
 					}
 					for _, d := range download.Platforms.Linux {
-						gameDownload <- &Download{
+						gameDownload <- &backend.GogFile{
 							Name:    fmt.Sprintf("%s %s %s", color.LightPurple(d.Name), color.Red("[Linux]"), color.LightYellow("["+d.Size+"]")),
 							URL:     gog.EmbedEndpoint + d.ManualDownloadURL,
 							File:    path + "/Linux",
@@ -169,82 +170,6 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *Download, extraDownlo
 
 	close(gameDownload)
 	close(extraDownload)
-}
-
-func download(downloads <-chan *Download, client *gog.Client) {
-	for d := range downloads {
-		path := *targetDir + d.File
-
-		filename, reader, err := client.DownloadFile(d.URL)
-		if err != nil {
-			log.Printf("Unable to connect to GoG: %+v", err)
-			continue
-		}
-
-		// Check for version information from last time.
-		versionFile := path + "/." + filename + ".version"
-		if d.Version != "" {
-			if lastVersion, _ := ioutil.ReadFile(versionFile); string(lastVersion) == d.Version {
-				fmt.Printf("Skipping %s as it is already up to date.\n", d.Name)
-				reader.Close()
-				continue
-			}
-		} else if info, _ := os.Stat(path + "/" + filename); info != nil {
-			fmt.Printf("Skipping %s as it is already downloaded.\n", d.Name)
-			reader.Close()
-			continue
-		}
-
-		version := ""
-		if d.Version != "" {
-			version = " (version: " + color.Purple(d.Version) + ")"
-		}
-		fmt.Printf("%s%s\n  %s -> %s\n", d.Name, version, color.LightBlue(d.URL), color.Green(path))
-		err = downloadFile(reader, path, filename)
-		if err != nil {
-			log.Printf("Unable to download file: %+v", err)
-			continue
-		}
-
-		if d.Version != "" {
-			// Save version information for next time.
-			err = ioutil.WriteFile(versionFile, []byte(d.Version), 0666)
-			if err != nil {
-				log.Printf("Unable to save version file: %+v", err)
-				continue
-			}
-		}
-	}
-
-	waitGroup.Done()
-}
-
-func downloadFile(reader io.ReadCloser, path string, filename string) error {
-	defer reader.Close()
-	if filename == "" {
-		return fmt.Errorf("No filename available, skipping this file")
-	}
-
-	err := os.MkdirAll(path, os.ModePerm)
-	if err != nil {
-		return err
-	}
-
-	tmpfile := path + "/." + filename + ".tmp"
-	outfile := path + "/" + filename
-	writer, err := os.OpenFile(tmpfile, os.O_WRONLY|os.O_CREATE, 0666)
-	if err != nil {
-		return err
-	}
-	defer writer.Close()
-
-	_, err = io.Copy(writer, reader)
-	if err != nil {
-		return err
-	}
-
-	os.Rename(tmpfile, outfile)
-	return err
 }
 
 func signalHandler(finished chan<- bool) {
