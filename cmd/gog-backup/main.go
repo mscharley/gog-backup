@@ -24,10 +24,12 @@ var (
 )
 
 var (
-	backendOpt   = flag.String("backend", "local", "Which backend to use for processing files to backup. The default, local, uses a folder on your hard drive.")
-	refreshToken = flag.String("refreshToken", "", "A refresh token for the GoG API.")
-	retries      = flag.Int("retries", 3, "How many times to retry downloading a file before giving up.")
-	targetDir    = flag.String("targetDir", os.Getenv("HOME")+"/GoG", "The target directory to download to. This means different things to different backends.")
+	backendOpt     = flag.String("backend", "local", "Which backend to use for processing files to backup. The default, local, uses a folder on your hard drive.")
+	refreshToken   = flag.String("refreshToken", "", "A refresh token for the GoG API.")
+	retries        = flag.Int("retries", 3, "How many times to retry downloading a file before giving up.")
+	targetDir      = flag.String("targetDir", os.Getenv("HOME")+"/GoG", "The target directory to download to. This means different things to different backends.")
+	gameDownloads  = flag.Int("gameDownloads", 2, "How many game downloads to do concurrently.")
+	extraDownloads = flag.Int("extraDownloads", 2, "How many extras to download concurrently.")
 )
 
 func main() {
@@ -51,19 +53,21 @@ func main() {
 	go generateGames(gameInfo, finished, client)
 	go fetchDetails(gameInfo, gameDownload, extraDownload, client)
 
-	var be backend.Handler
+	var backendHandler backend.Handler
 	switch *backendOpt {
 	case "local":
-		be = local.DownloadFile(targetDir, retries)
+		backendHandler = local.DownloadFile(targetDir, retries)
 	default:
 		log.Fatalf("Unknown backend (%s): valid values are; local", *backendOpt)
 	}
-	waitGroup.Add(4)
 
-	go be(gameDownload, waitGroup, client)
-	go be(gameDownload, waitGroup, client)
-	go be(extraDownload, waitGroup, client)
-	go be(extraDownload, waitGroup, client)
+	waitGroup.Add(*gameDownloads + *extraDownloads)
+	for i := 0; i < *gameDownloads; i++ {
+		go backendHandler(gameDownload, waitGroup, client)
+	}
+	for i := 0; i < *extraDownloads; i++ {
+		go backendHandler(extraDownload, waitGroup, client)
+	}
 	waitGroup.Wait()
 }
 
