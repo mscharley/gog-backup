@@ -51,7 +51,7 @@ func DownloadFile(retries *int) (backend.Handler, error) {
 			return "", err
 		}
 
-		return string(buff.Bytes()), nil
+		return strings.TrimRight(string(buff.Bytes()), "\x00"), nil
 	}
 
 	fileExists := func(filename string) (bool, error) {
@@ -116,7 +116,7 @@ func DownloadFile(retries *int) (backend.Handler, error) {
 	handler := func(downloads <-chan *backend.GogFile, waitGroup *sync.WaitGroup, client *gog.Client) {
 		for d := range downloads {
 			basepath := d.File
-			if len(*prefix) > 0 {
+			if *prefix != "" {
 				basepath = path.Join(*prefix, basepath)
 			}
 
@@ -137,7 +137,7 @@ func DownloadFile(retries *int) (backend.Handler, error) {
 						break
 					}
 				} else if info, _ := fileExists(path.Join(basepath, filename)); info {
-					fmt.Printf("Skipping %s as it is already backed up and isn't versioned.\n", d.Name)
+					log.Printf("Skipping %s as it is already backed up and isn't versioned.\n", d.Name)
 					reader.Close()
 					break
 				}

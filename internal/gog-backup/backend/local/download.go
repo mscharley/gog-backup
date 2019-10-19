@@ -41,7 +41,7 @@ func DownloadFile(retries *int) backend.Handler {
 						break
 					}
 				} else if info, _ := os.Stat(path + "/" + filename); info != nil {
-					fmt.Printf("Skipping %s as it is backed up and isn't versioned.\n", d.Name)
+					log.Printf("Skipping %s as it is backed up and isn't versioned.\n", d.Name)
 					reader.Close()
 					break
 				}
