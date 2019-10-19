@@ -36,12 +36,12 @@ func DownloadFile(retries *int) backend.Handler {
 				versionFile := path + "/." + filename + ".version"
 				if d.Version != "" {
 					if lastVersion, _ := ioutil.ReadFile(versionFile); string(lastVersion) == d.Version {
-						fmt.Printf("Skipping %s as it is already up to date.\n", d.Name)
+						log.Printf("Skipping %s as it is already up to date.\n", d.Name)
 						reader.Close()
 						break
 					}
 				} else if info, _ := os.Stat(path + "/" + filename); info != nil {
-					fmt.Printf("Skipping %s as it is already downloaded.\n", d.Name)
+					fmt.Printf("Skipping %s as it is backed up and isn't versioned.\n", d.Name)
 					reader.Close()
 					break
 				}
