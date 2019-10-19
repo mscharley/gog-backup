@@ -78,7 +78,7 @@ func DownloadFile(retries *int) (backend.Handler, error) {
 	writeFile := func(filename string, content string) error {
 		_, err := uploader.Upload(&s3manager.UploadInput{
 			Bucket: aws.String(*bucket),
-			Key:    aws.String(content),
+			Key:    aws.String(filename),
 			Body:   strings.NewReader(content),
 		})
 
