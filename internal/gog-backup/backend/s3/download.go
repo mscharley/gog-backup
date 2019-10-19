@@ -132,12 +132,12 @@ func DownloadFile(retries *int) (backend.Handler, error) {
 				versionFile := path.Join(basepath, "."+filename+".version")
 				if d.Version != "" {
 					if lastVersion, _ := readFile(versionFile); string(lastVersion) == d.Version {
-						fmt.Printf("Skipping %s as it is already up to date.\n", d.Name)
+						log.Printf("Skipping %s as it is already up to date.\n", d.Name)
 						reader.Close()
 						break
 					}
 				} else if info, _ := fileExists(path.Join(basepath, filename)); info {
-					fmt.Printf("Skipping %s as it is already downloaded.\n", d.Name)
+					fmt.Printf("Skipping %s as it is already backed up and isn't versioned.\n", d.Name)
 					reader.Close()
 					break
 				}
