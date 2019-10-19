@@ -16,7 +16,7 @@ Backups for games and other media attached to your GoG.com account.
 Installation
 ------------
 
-```
+```console
 go get github.com/mscharley/gog-backup/cmd/gog-backup
 ```
 
@@ -25,7 +25,7 @@ go get github.com/mscharley/gog-backup/cmd/gog-backup
 Usage
 -----
 
-```
+```console
 gog-backup -help
 ```
 
@@ -35,8 +35,16 @@ Configuration
 You may place any command-line parameters in an ini file anywhere you like (I use `~/.gog-backup.ini`) and then
 passed in using `gog-backup -config ~/.gog-backup.ini`.
 
-```
+```ini
 refreshToken = "foobar"
+```
+
+Development
+-----------
+
+```console
+make
+./gog-backup
 ```
 
   [license]: https://raw.github.com/mscharley/gog-backup/master/LICENSE

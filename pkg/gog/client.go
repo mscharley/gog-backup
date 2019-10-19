@@ -50,15 +50,15 @@ func (client *Client) refreshAccess() error {
 	if err != nil {
 		return err
 	}
-	if response.StatusCode/100 != 2 {
-		return fmt.Errorf("Unexpected status code: %d", response.StatusCode)
-	}
 
-	var login = new(refreshTokenResponse)
 	buf, err := ioutil.ReadAll(response.Body)
 	if err != nil {
 		return err
 	}
+	if response.StatusCode/100 != 2 {
+		return fmt.Errorf("Unexpected status code: %d\n%s", response.StatusCode, buf)
+	}
+	var login = new(refreshTokenResponse)
 	err = json.Unmarshal(buf, &login)
 	if err != nil {
 		return err

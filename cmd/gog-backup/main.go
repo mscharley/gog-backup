@@ -15,6 +15,7 @@ import (
 	"github.com/bclicn/color"
 	"github.com/mscharley/gog-backup/internal/gog-backup/backend"
 	"github.com/mscharley/gog-backup/internal/gog-backup/backend/local"
+	"github.com/mscharley/gog-backup/internal/gog-backup/backend/s3"
 	"github.com/mscharley/gog-backup/pkg/gog"
 	"github.com/vharitonsky/iniflags"
 )
@@ -27,7 +28,6 @@ var (
 	backendOpt     = flag.String("backend", "local", "Which backend to use for processing files to backup. The default, local, uses a folder on your hard drive.")
 	refreshToken   = flag.String("refreshToken", "", "A refresh token for the GoG API.")
 	retries        = flag.Int("retries", 3, "How many times to retry downloading a file before giving up.")
-	targetDir      = flag.String("targetDir", os.Getenv("HOME")+"/GoG", "The target directory to download to. This means different things to different backends.")
 	gameDownloads  = flag.Int("gameDownloads", 2, "How many game downloads to do concurrently.")
 	extraDownloads = flag.Int("extraDownloads", 2, "How many extras to download concurrently.")
 )
@@ -44,6 +44,21 @@ func main() {
 		RefreshToken: *refreshToken,
 	}
 
+	var err error
+	var backendHandler backend.Handler
+	switch *backendOpt {
+	case "local":
+		backendHandler = local.DownloadFile(retries)
+	case "s3":
+		backendHandler, err = s3.DownloadFile(retries)
+	default:
+		log.Fatalf("Unknown backend (%s): valid values are; local", *backendOpt)
+	}
+
+	if err != nil {
+		log.Fatalf("Error loading the backend (%s): %+v", *backendOpt, err)
+	}
+
 	finished := make(chan bool)
 	gameInfo := make(chan int64)
 	gameDownload := make(chan *backend.GogFile)
@@ -52,14 +67,6 @@ func main() {
 	go signalHandler(finished)
 	go generateGames(gameInfo, finished, client)
 	go fetchDetails(gameInfo, gameDownload, extraDownload, client)
-
-	var backendHandler backend.Handler
-	switch *backendOpt {
-	case "local":
-		backendHandler = local.DownloadFile(targetDir, retries)
-	default:
-		log.Fatalf("Unknown backend (%s): valid values are; local", *backendOpt)
-	}
 
 	waitGroup.Add(*gameDownloads + *extraDownloads)
 	for i := 0; i < *gameDownloads; i++ {
@@ -122,7 +129,7 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *backend.GogFile, extr
 				Details *gog.GameDetails
 			}{"/" + safePath(result.Title), result})
 			for i := 0; i < len(games); i++ {
-				path := games[i].Path
+				path := games[i].Path[1:]
 				game := games[i].Details
 
 				for _, extra := range game.Extras {
@@ -184,11 +191,11 @@ func signalHandler(finished chan<- bool) {
 	finished <- true
 	close(finished)
 	log.Printf("Received a %s signal, finishing downloads before closing.", signal)
-	timeout := time.After(time.Second * 60)
+	timeout := time.After(time.Minute * 5)
 	select {
 	case signal = <-c:
 		log.Fatalf("Received a second %s signal, closing down without cleanup.", signal)
 	case _ = <-timeout:
-		log.Fatalln("Closing after waiting 60 seconds.")
+		log.Fatalln("Closing after waiting 5 minutes.")
 	}
 }

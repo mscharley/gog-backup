@@ -1,6 +1,7 @@
 package local
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -13,12 +14,16 @@ import (
 	"github.com/mscharley/gog-backup/pkg/gog"
 )
 
+var (
+	targetDir = flag.String("targetDir", os.Getenv("HOME")+"/GoG", "The target directory to download to. (backend=local)")
+)
+
 // DownloadFile is the entrypoint for the local backend. This backend downloads all the files from GoG and stores
 // them in a folder structure on the local hard drive.
-func DownloadFile(targetDir *string, retries *int) backend.Handler {
+func DownloadFile(retries *int) backend.Handler {
 	return func(downloads <-chan *backend.GogFile, waitGroup *sync.WaitGroup, client *gog.Client) {
 		for d := range downloads {
-			path := *targetDir + d.File
+			path := *targetDir + "/" + d.File
 
 			for i := 1; i <= *retries; i++ {
 				filename, reader, err := client.DownloadFile(d.URL)
@@ -95,6 +100,6 @@ func downloadFile(reader io.ReadCloser, path string, filename string) error {
 		return err
 	}
 
-	os.Rename(tmpfile, outfile)
+	err = os.Rename(tmpfile, outfile)
 	return err
 }
