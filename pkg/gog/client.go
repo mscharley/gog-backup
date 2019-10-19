@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -45,7 +46,7 @@ func (client *Client) refreshAccess() error {
 	if client.tokenExpiry-time.Now().Unix() > 60 {
 		return nil
 	}
-	fmt.Println("Re-generating the access token for GoG.")
+	log.Println("Re-generating the access token for GoG.")
 	response, err := client.Get(AuthEndpoint + "/token?client_id=" + clientID + "&client_secret=" + clientSecret + "&grant_type=refresh_token&refresh_token=" + client.RefreshToken)
 	if err != nil {
 		return err
