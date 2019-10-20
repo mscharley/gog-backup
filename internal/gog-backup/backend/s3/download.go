@@ -15,16 +15,17 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/bclicn/color"
+	"github.com/juju/ratelimit"
 	"github.com/mscharley/gog-backup/internal/gog-backup/backend"
 	"github.com/mscharley/gog-backup/pkg/gog"
 )
 
 var (
 	bucket = flag.String("s3-bucket", "", "The bucket to upload to. (backend=s3)")
-	prefix = flag.String("s3-prefix", "", "A prefix path to upload into a directory. You probably want a trailing forwardslash. (backend=s3)")
+	prefix = flag.String("s3-prefix", "", "A prefix path to upload into a directory. (backend=s3)")
 )
 
-func DownloadFile(retries *int) (backend.Handler, error) {
+func DownloadFile(retries *int, uploadBucket *ratelimit.Bucket, downloadBucket *ratelimit.Bucket) (backend.Handler, error) {
 	// The session for S3.
 	sess := session.Must(session.NewSession())
 	region, err := s3manager.GetBucketRegion(aws.BackgroundContext(), sess, *bucket, "us-east-1")
@@ -85,15 +86,20 @@ func DownloadFile(retries *int) (backend.Handler, error) {
 		return err
 	}
 
-	downloadFile := func(reader io.ReadCloser, basepath string, filename string) error {
-		defer reader.Close()
+	downloadFile := func(reader io.Reader, basepath string, filename string) error {
 		tmpKey := path.Join(basepath, "."+filename+".tmp")
 		key := path.Join(basepath, filename)
+		var Body io.Reader
+		if uploadBucket == nil {
+			Body = reader
+		} else {
+			Body = ratelimit.Reader(reader, uploadBucket)
+		}
 
 		_, err := uploader.Upload(&s3manager.UploadInput{
 			Bucket: aws.String(*bucket),
 			Key:    aws.String(tmpKey),
-			Body:   reader,
+			Body:   Body,
 		})
 
 		if err != nil {
@@ -121,7 +127,13 @@ func DownloadFile(retries *int) (backend.Handler, error) {
 			}
 
 			for i := 1; i <= *retries; i++ {
-				filename, reader, err := client.DownloadFile(d.URL)
+				filename, readerTmp, err := client.DownloadFile(d.URL)
+				var reader io.Reader
+				if downloadBucket == nil {
+					reader = readerTmp
+				} else {
+					reader = ratelimit.Reader(readerTmp, downloadBucket)
+				}
 
 				if err != nil {
 					log.Printf("Unable to connect to GoG: %+v", err)
@@ -133,12 +145,12 @@ func DownloadFile(retries *int) (backend.Handler, error) {
 				if d.Version != "" {
 					if lastVersion, _ := readFile(versionFile); string(lastVersion) == d.Version {
 						log.Printf("Skipping %s as it is already up to date.\n", d.Name)
-						reader.Close()
+						readerTmp.Close()
 						break
 					}
 				} else if info, _ := fileExists(path.Join(basepath, filename)); info {
 					log.Printf("Skipping %s as it is already backed up and isn't versioned.\n", d.Name)
-					reader.Close()
+					readerTmp.Close()
 					break
 				}
 
@@ -148,6 +160,7 @@ func DownloadFile(retries *int) (backend.Handler, error) {
 				}
 				fmt.Printf("%s%s\n  %s -> %s\n", d.Name, version, color.LightBlue(d.URL), color.Green("s3://"+*bucket+"/"+path.Join(basepath, filename)))
 				err = downloadFile(reader, basepath, filename)
+				readerTmp.Close()
 				if err != nil {
 					log.Printf("Unable to download file: %+v", err)
 					continue

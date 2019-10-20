@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bclicn/color"
+	"github.com/juju/ratelimit"
 	"github.com/mscharley/gog-backup/internal/gog-backup/backend"
 	"github.com/mscharley/gog-backup/internal/gog-backup/backend/local"
 	"github.com/mscharley/gog-backup/internal/gog-backup/backend/s3"
@@ -26,17 +27,21 @@ var (
 
 var (
 	backendOpt     = flag.String("backend", "local", "Which backend to use for processing files to backup. The default, local, uses a folder on your hard drive.")
-	refreshToken   = flag.String("refreshToken", "", "A refresh token for the GoG API.")
+	refreshToken   = flag.String("refresh-token", "", "A refresh token for the GoG API.")
 	retries        = flag.Int("retries", 3, "How many times to retry downloading a file before giving up.")
-	gameDownloads  = flag.Int("gameDownloads", 2, "How many game downloads to do concurrently.")
-	extraDownloads = flag.Int("extraDownloads", 2, "How many extras to download concurrently.")
+	cleanupTimeout = flag.Int64("cleanup-timeout", 300, "How long in seconds to allow current downloads to finish.")
+
+	gameDownloads  = flag.Int("game-downloads", 2, "How many game downloads to do concurrently.")
+	extraDownloads = flag.Int("extra-downloads", 2, "How many extras to download concurrently.")
+	limitDownload  = flag.Int("limit-download", 0, "Download limit in KiB/s. (default: unlimited)")
+	limitUpload    = flag.Int("limit-upload", 0, "Upload limit in KiB/s (default: unlimited)")
 )
 
 func main() {
 	iniflags.Parse()
 
 	if *refreshToken == "" {
-		log.Fatalln("You must provide a refresh token for GoG.com via -refreshToken.")
+		log.Fatalln("You must provide a refresh token for GoG.com via -refresh-token.")
 	}
 
 	client := &gog.Client{
@@ -46,13 +51,23 @@ func main() {
 
 	var err error
 	var backendHandler backend.Handler
+	var downloadBucket *ratelimit.Bucket
+	var uploadBucket *ratelimit.Bucket
+
+	if *limitDownload > 0 {
+		downloadBucket = ratelimit.NewBucketWithRate(float64(*limitDownload*1024), int64(*limitDownload*1024))
+	}
+	if *limitUpload > 0 {
+		uploadBucket = ratelimit.NewBucketWithRate(float64(*limitUpload*1024), int64(*limitDownload*1024))
+	}
+
 	switch *backendOpt {
 	case "local":
-		backendHandler = local.DownloadFile(retries)
+		backendHandler = local.DownloadFile(retries, downloadBucket)
 	case "s3":
-		backendHandler, err = s3.DownloadFile(retries)
+		backendHandler, err = s3.DownloadFile(retries, uploadBucket, downloadBucket)
 	default:
-		log.Fatalf("Unknown backend (%s): valid values are; local", *backendOpt)
+		log.Fatalf("Unknown backend (%s): valid values are; local, s3", *backendOpt)
 	}
 
 	if err != nil {
@@ -191,11 +206,11 @@ func signalHandler(finished chan<- bool) {
 	finished <- true
 	close(finished)
 	log.Printf("Received a %s signal, finishing downloads before closing.", signal)
-	timeout := time.After(time.Minute * 5)
+	timeout := time.After(time.Second * time.Duration(*cleanupTimeout))
 	select {
 	case signal = <-c:
 		log.Fatalf("Received a second %s signal, closing down without cleanup.", signal)
 	case _ = <-timeout:
-		log.Fatalln("Closing after waiting 5 minutes.")
+		log.Fatalf("Closing after waiting %d seconds.", *cleanupTimeout)
 	}
 }

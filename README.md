@@ -36,7 +36,7 @@ You may place any command-line parameters in an ini file anywhere you like (I us
 passed in using `gog-backup -config ~/.gog-backup.ini`.
 
 ```ini
-refreshToken = "foobar"
+refresh-token = "foobar"
 ```
 
 Development
