@@ -3,10 +3,12 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"strings"
 	"sync"
 	"syscall"
@@ -63,9 +65,9 @@ func main() {
 
 	switch *backendOpt {
 	case "local":
-		backendHandler = local.DownloadFile(retries, downloadBucket)
+		backendHandler = local.NewHandler()
 	case "s3":
-		backendHandler, err = s3.DownloadFile(retries, uploadBucket, downloadBucket)
+		backendHandler, err = s3.NewHandler(uploadBucket)
 	default:
 		log.Fatalf("Unknown backend (%s): valid values are; local, s3", *backendOpt)
 	}
@@ -85,10 +87,10 @@ func main() {
 
 	waitGroup.Add(*gameDownloads + *extraDownloads)
 	for i := 0; i < *gameDownloads; i++ {
-		go backendHandler(gameDownload, waitGroup, client)
+		go downloadFiles(retries, downloadBucket, backendHandler, gameDownload, waitGroup, client)
 	}
 	for i := 0; i < *extraDownloads; i++ {
-		go backendHandler(extraDownload, waitGroup, client)
+		go downloadFiles(retries, downloadBucket, backendHandler, extraDownload, waitGroup, client)
 	}
 	waitGroup.Wait()
 }
@@ -213,4 +215,72 @@ func signalHandler(finished chan<- bool) {
 	case _ = <-timeout:
 		log.Fatalf("Closing after waiting %d seconds.", *cleanupTimeout)
 	}
+}
+
+func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, handler backend.Handler, downloads <-chan *backend.GogFile, waitGroup *sync.WaitGroup, client *gog.Client) {
+	prefix := handler.GetPrefix()
+	displayPrefix := handler.GetDisplayPrefix()
+
+	for d := range downloads {
+		basepath := d.File
+		if prefix != "" {
+			basepath = path.Join(prefix, basepath)
+		}
+
+		for i := 1; i <= *retries; i++ {
+			filename, readerTmp, err := client.DownloadFile(d.URL)
+			var reader io.Reader
+			if downloadBucket == nil {
+				reader = readerTmp
+			} else {
+				reader = ratelimit.Reader(readerTmp, downloadBucket)
+			}
+
+			if err != nil {
+				log.Printf("Unable to connect to GoG: %+v", err)
+				continue
+			}
+
+			// Check for version information from last time.
+			versionFile := path.Join(basepath, "."+filename+".version")
+			if d.Version != "" {
+				if lastVersion, _ := handler.ReadFile(versionFile); string(lastVersion) == d.Version {
+					log.Printf("Skipping %s as it is already up to date.\n", d.Name)
+					readerTmp.Close()
+					break
+				}
+			} else if info, _ := handler.FileExists(path.Join(basepath, filename)); info {
+				log.Printf("Skipping %s as it is already backed up and isn't versioned.\n", d.Name)
+				readerTmp.Close()
+				break
+			}
+
+			version := ""
+			if d.Version != "" {
+				version = " (version: " + color.Purple(d.Version) + ")"
+			}
+			fmt.Printf("%s%s\n  %s -> %s\n", d.Name, version, color.LightBlue(d.URL), color.Green(path.Join(displayPrefix, basepath, filename)))
+			err = handler.TransferFile(reader, basepath, filename)
+			readerTmp.Close()
+			if err != nil {
+				log.Printf("Unable to download file: %+v", err)
+				continue
+			}
+
+			if d.Version != "" {
+				// Save version information for next time.
+				err = handler.WriteFile(versionFile, d.Version)
+				if err != nil {
+					log.Printf("Unable to save version file: %+v", err)
+					// Good enough for this run through - we'll redownload next time and retry saving the version file then.
+					break
+				}
+			}
+
+			// We successfully managed to download this file, skip the rest of our retries.
+			break
+		}
+	}
+
+	waitGroup.Done()
 }
