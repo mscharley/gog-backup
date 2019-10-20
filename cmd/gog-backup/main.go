@@ -238,7 +238,7 @@ func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progre
 	prefix := handler.GetPrefix()
 	displayPrefix := handler.GetDisplayPrefix()
 
-	loop := func(d *backend.GogFile, basepath string) bool {
+	loop := func(d *backend.GogFile, attempt int, basepath string) bool {
 		filename, readerTmp, contentLength, err := client.DownloadFile(d.URL)
 
 		if err != nil {
@@ -277,11 +277,11 @@ func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progre
 			bar := p.AddBar(*contentLength, mpb.BarStyle("[=>-|"),
 				mpb.BarRemoveOnComplete(),
 				mpb.PrependDecorators(
-					decor.Name(d.PlainName+platform),
+					decor.Name(fmt.Sprintf("[A%d] %s%s", attempt, d.PlainName, platform)),
 					decor.CountersKibiByte(" [% .2f / % .2f]"),
 				),
 				mpb.AppendDecorators(
-					decor.EwmaETA(decor.ET_STYLE_GO, 90),
+					decor.EwmaETA(decor.ET_STYLE_MMSS, 90),
 					decor.Name(" ] "),
 					decor.EwmaSpeed(decor.UnitKiB, "% .2f", 60),
 					decor.Name(" "),
@@ -330,7 +330,7 @@ func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progre
 		}
 
 		for i := 1; i <= *retries; i++ {
-			if loop(d, basepath) {
+			if loop(d, i, basepath) {
 				break
 			}
 		}
