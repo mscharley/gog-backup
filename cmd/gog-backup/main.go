@@ -20,7 +20,10 @@ import (
 	"github.com/mscharley/gog-backup/internal/gog-backup/backend/local"
 	"github.com/mscharley/gog-backup/internal/gog-backup/backend/s3"
 	"github.com/mscharley/gog-backup/pkg/gog"
+	"github.com/vbauerster/mpb"
+	"github.com/vbauerster/mpb/decor"
 	"github.com/vharitonsky/iniflags"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 var (
@@ -32,6 +35,7 @@ var (
 	refreshToken   = flag.String("refresh-token", "", "A refresh token for the GoG API.")
 	retries        = flag.Int("retries", 3, "How many times to retry downloading a file before giving up.")
 	cleanupTimeout = flag.Int64("cleanup-timeout", 300, "How long in seconds to allow current downloads to finish.")
+	progress       = flag.Bool("progress", true, "Display progress bars")
 
 	gameDownloads  = flag.Int("game-downloads", 2, "How many game downloads to do concurrently.")
 	extraDownloads = flag.Int("extra-downloads", 2, "How many extras to download concurrently.")
@@ -41,6 +45,9 @@ var (
 
 func main() {
 	iniflags.Parse()
+	if !terminal.IsTerminal(int(os.Stdout.Fd())) {
+		*progress = false
+	}
 
 	if *refreshToken == "" {
 		log.Fatalln("You must provide a refresh token for GoG.com via -refresh-token.")
@@ -80,6 +87,9 @@ func main() {
 	gameInfo := make(chan int64)
 	gameDownload := make(chan *backend.GogFile)
 	extraDownload := make(chan *backend.GogFile, 10)
+	progressBar := mpb.New(
+		mpb.WithRefreshRate(180 * time.Millisecond),
+	)
 
 	go signalHandler(finished)
 	go generateGames(gameInfo, finished, client)
@@ -87,10 +97,10 @@ func main() {
 
 	waitGroup.Add(*gameDownloads + *extraDownloads)
 	for i := 0; i < *gameDownloads; i++ {
-		go downloadFiles(retries, downloadBucket, backendHandler, gameDownload, waitGroup, client)
+		go downloadFiles(retries, downloadBucket, progressBar, backendHandler, gameDownload, waitGroup, client)
 	}
 	for i := 0; i < *extraDownloads; i++ {
-		go downloadFiles(retries, downloadBucket, backendHandler, extraDownload, waitGroup, client)
+		go downloadFiles(retries, downloadBucket, progressBar, backendHandler, extraDownload, waitGroup, client)
 	}
 	waitGroup.Wait()
 }
@@ -151,10 +161,11 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *backend.GogFile, extr
 
 				for _, extra := range game.Extras {
 					extraDownload <- &backend.GogFile{
-						Name:    fmt.Sprintf("%s %s", color.LightPurple("Extra for "+game.Title+": "+extra.Name), color.LightYellow("["+extra.Size+"]")),
-						URL:     gog.EmbedEndpoint + extra.ManualDownloadURL,
-						File:    path + "/Extras",
-						Version: extra.Version,
+						Name:      fmt.Sprintf("%s %s", color.LightPurple("Extra for "+game.Title+": "+extra.Name), color.LightYellow("["+extra.Size+"]")),
+						PlainName: "Extra for " + game.Title + ": " + extra.Name,
+						URL:       gog.EmbedEndpoint + extra.ManualDownloadURL,
+						File:      path + "/Extras",
+						Version:   extra.Version,
 					}
 				}
 
@@ -162,26 +173,32 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *backend.GogFile, extr
 					download := game.Downloads[0]
 					for _, d := range download.Platforms.Windows {
 						gameDownload <- &backend.GogFile{
-							Name:    fmt.Sprintf("%s %s %s", color.LightPurple(d.Name), color.Red("[Windows]"), color.LightYellow("["+d.Size+"]")),
-							URL:     gog.EmbedEndpoint + d.ManualDownloadURL,
-							File:    path + "/Windows",
-							Version: d.Version,
+							Name:      fmt.Sprintf("%s %s %s", color.LightPurple(d.Name), color.Red("[Windows]"), color.LightYellow("["+d.Size+"]")),
+							PlainName: d.Name,
+							Platform:  "Windows",
+							URL:       gog.EmbedEndpoint + d.ManualDownloadURL,
+							File:      path + "/Windows",
+							Version:   d.Version,
 						}
 					}
 					for _, d := range download.Platforms.Mac {
 						gameDownload <- &backend.GogFile{
-							Name:    fmt.Sprintf("%s %s %s", color.LightPurple(d.Name), color.Red("[Mac]"), color.LightYellow("["+d.Size+"]")),
-							URL:     gog.EmbedEndpoint + d.ManualDownloadURL,
-							File:    path + "/Mac",
-							Version: d.Version,
+							Name:      fmt.Sprintf("%s %s %s", color.LightPurple(d.Name), color.Red("[Mac]"), color.LightYellow("["+d.Size+"]")),
+							PlainName: d.Name,
+							Platform:  "Mac",
+							URL:       gog.EmbedEndpoint + d.ManualDownloadURL,
+							File:      path + "/Mac",
+							Version:   d.Version,
 						}
 					}
 					for _, d := range download.Platforms.Linux {
 						gameDownload <- &backend.GogFile{
-							Name:    fmt.Sprintf("%s %s %s", color.LightPurple(d.Name), color.Red("[Linux]"), color.LightYellow("["+d.Size+"]")),
-							URL:     gog.EmbedEndpoint + d.ManualDownloadURL,
-							File:    path + "/Linux",
-							Version: d.Version,
+							Name:      fmt.Sprintf("%s %s %s", color.LightPurple(d.Name), color.Red("[Linux]"), color.LightYellow("["+d.Size+"]")),
+							PlainName: d.Name,
+							Platform:  "Linux",
+							URL:       gog.EmbedEndpoint + d.ManualDownloadURL,
+							File:      path + "/Linux",
+							Version:   d.Version,
 						}
 					}
 				}
@@ -217,9 +234,90 @@ func signalHandler(finished chan<- bool) {
 	}
 }
 
-func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, handler backend.Handler, downloads <-chan *backend.GogFile, waitGroup *sync.WaitGroup, client *gog.Client) {
+func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progress, handler backend.Handler, downloads <-chan *backend.GogFile, waitGroup *sync.WaitGroup, client *gog.Client) {
 	prefix := handler.GetPrefix()
 	displayPrefix := handler.GetDisplayPrefix()
+
+	loop := func(d *backend.GogFile, basepath string) bool {
+		filename, readerTmp, contentLength, err := client.DownloadFile(d.URL)
+		if contentLength == nil {
+			log.Fatalf("No Content-Length available for %s", d.URL)
+		}
+
+		var reader io.Reader = readerTmp
+		if downloadBucket != nil {
+			reader = ratelimit.Reader(reader, downloadBucket)
+		}
+
+		if err != nil {
+			log.Printf("Unable to connect to GoG: %+v", err)
+			return false
+		}
+
+		// Check for version information from last time.
+		versionFile := path.Join(basepath, "."+filename+".version")
+		if d.Version != "" {
+			if lastVersion, _ := handler.ReadFile(versionFile); string(lastVersion) == d.Version {
+				log.Printf("Skipping %s as it is already up to date.\n", d.PlainName)
+				readerTmp.Close()
+				return true
+			}
+		} else if info, _ := handler.FileExists(path.Join(basepath, filename)); info {
+			log.Printf("Skipping %s as it is already backed up and isn't versioned.\n", d.PlainName)
+			readerTmp.Close()
+			return true
+		}
+
+		if *progress {
+			var platform string
+			if d.Platform != "" {
+				platform = " " + color.Red("["+d.Platform+"]")
+			}
+
+			bar := p.AddBar(*contentLength, mpb.BarStyle("[=>-|"),
+				mpb.BarRemoveOnComplete(),
+				mpb.PrependDecorators(
+					decor.Name(color.LightPurple(d.PlainName)+platform),
+					decor.CountersKibiByte(" % .2f / % .2f"),
+				),
+				mpb.AppendDecorators(
+					decor.EwmaETA(decor.ET_STYLE_GO, 90),
+					decor.Name(" ] "),
+					decor.EwmaSpeed(decor.UnitKiB, "% .2f", 60),
+				),
+			)
+			barReader := bar.ProxyReader(reader)
+			defer barReader.Close()
+			reader = barReader
+		} else {
+			version := ""
+			if d.Version != "" {
+				version = " (version: " + color.Purple(d.Version) + ")"
+			}
+			fmt.Printf("%s%s\n  %s -> %s\n", d.Name, version, color.LightBlue(d.URL), color.Green(displayPrefix+"/"+path.Join(basepath, filename)))
+		}
+
+		defer readerTmp.Close()
+		err = handler.TransferFile(reader, basepath, filename)
+
+		if err != nil {
+			log.Printf("Unable to download file: %+v", err)
+			return false
+		}
+
+		if d.Version != "" {
+			// Save version information for next time.
+			err = handler.WriteFile(versionFile, d.Version)
+			if err != nil {
+				log.Printf("Unable to save version file: %+v", err)
+				// Good enough for this run through - we'll redownload next time and retry saving the version file then.
+				return true
+			}
+		}
+
+		// We successfully managed to download this file, skip the rest of our retries.
+		return true
+	}
 
 	for d := range downloads {
 		basepath := d.File
@@ -228,57 +326,9 @@ func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, handler backe
 		}
 
 		for i := 1; i <= *retries; i++ {
-			filename, readerTmp, err := client.DownloadFile(d.URL)
-			var reader io.Reader
-			if downloadBucket == nil {
-				reader = readerTmp
-			} else {
-				reader = ratelimit.Reader(readerTmp, downloadBucket)
-			}
-
-			if err != nil {
-				log.Printf("Unable to connect to GoG: %+v", err)
-				continue
-			}
-
-			// Check for version information from last time.
-			versionFile := path.Join(basepath, "."+filename+".version")
-			if d.Version != "" {
-				if lastVersion, _ := handler.ReadFile(versionFile); string(lastVersion) == d.Version {
-					log.Printf("Skipping %s as it is already up to date.\n", d.Name)
-					readerTmp.Close()
-					break
-				}
-			} else if info, _ := handler.FileExists(path.Join(basepath, filename)); info {
-				log.Printf("Skipping %s as it is already backed up and isn't versioned.\n", d.Name)
-				readerTmp.Close()
+			if loop(d, basepath) {
 				break
 			}
-
-			version := ""
-			if d.Version != "" {
-				version = " (version: " + color.Purple(d.Version) + ")"
-			}
-			fmt.Printf("%s%s\n  %s -> %s\n", d.Name, version, color.LightBlue(d.URL), color.Green(path.Join(displayPrefix, basepath, filename)))
-			err = handler.TransferFile(reader, basepath, filename)
-			readerTmp.Close()
-			if err != nil {
-				log.Printf("Unable to download file: %+v", err)
-				continue
-			}
-
-			if d.Version != "" {
-				// Save version information for next time.
-				err = handler.WriteFile(versionFile, d.Version)
-				if err != nil {
-					log.Printf("Unable to save version file: %+v", err)
-					// Good enough for this run through - we'll redownload next time and retry saving the version file then.
-					break
-				}
-			}
-
-			// We successfully managed to download this file, skip the rest of our retries.
-			break
 		}
 	}
 
