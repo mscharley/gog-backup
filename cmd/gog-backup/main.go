@@ -240,6 +240,11 @@ func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progre
 
 	loop := func(d *backend.GogFile, basepath string) bool {
 		filename, readerTmp, contentLength, err := client.DownloadFile(d.URL)
+
+		if err != nil {
+			log.Printf("Unable to connect to GoG: %+v", err)
+			return false
+		}
 		if contentLength == nil {
 			log.Fatalf("No Content-Length available for %s", d.URL)
 		}
@@ -247,11 +252,6 @@ func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progre
 		var reader io.Reader = readerTmp
 		if downloadBucket != nil {
 			reader = ratelimit.Reader(reader, downloadBucket)
-		}
-
-		if err != nil {
-			log.Printf("Unable to connect to GoG: %+v", err)
-			return false
 		}
 
 		// Check for version information from last time.
@@ -271,23 +271,27 @@ func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progre
 		if *progress {
 			var platform string
 			if d.Platform != "" {
-				platform = " " + color.Red("["+d.Platform+"]")
+				platform = " " + "[" + d.Platform + "]"
 			}
 
 			bar := p.AddBar(*contentLength, mpb.BarStyle("[=>-|"),
 				mpb.BarRemoveOnComplete(),
 				mpb.PrependDecorators(
-					decor.Name(color.LightPurple(d.PlainName)+platform),
-					decor.CountersKibiByte(" % .2f / % .2f"),
+					decor.Name(d.PlainName+platform),
+					decor.CountersKibiByte(" [% .2f / % .2f]"),
 				),
 				mpb.AppendDecorators(
 					decor.EwmaETA(decor.ET_STYLE_GO, 90),
 					decor.Name(" ] "),
 					decor.EwmaSpeed(decor.UnitKiB, "% .2f", 60),
+					decor.Name(" "),
 				),
 			)
 			barReader := bar.ProxyReader(reader)
-			defer barReader.Close()
+			defer func() {
+				barReader.Close()
+				bar.Abort(true)
+			}()
 			reader = barReader
 		} else {
 			version := ""
