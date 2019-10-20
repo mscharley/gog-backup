@@ -77,9 +77,6 @@ func (client *Client) refreshAccess() error {
 // See also GetFilteredProducts()
 // See also https://gogapidocs.readthedocs.io/en/latest/account.html#get--user-data-games
 func (client *Client) GameList() ([]int64, error) {
-	if err := client.refreshAccess(); err != nil {
-		return nil, err
-	}
 	var result = new(gameList)
 	err := client.authenticatedGet(EmbedEndpoint+"/user/data/games", result)
 	if err != nil {
@@ -91,9 +88,6 @@ func (client *Client) GameList() ([]int64, error) {
 
 // GetFilteredProducts returns paginated search results for games or movies purchased by the current user.
 func (client *Client) GetFilteredProducts(mediaType MediaType, page int) (*FilteredProductPage, error) {
-	if err := client.refreshAccess(); err != nil {
-		return nil, err
-	}
 	var result = new(FilteredProductPage)
 	err := client.authenticatedGet(fmt.Sprintf("%s/account/getFilteredProducts?mediaType=%d&page=%d", EmbedEndpoint, mediaType, page), result)
 	if err != nil {
@@ -105,9 +99,6 @@ func (client *Client) GetFilteredProducts(mediaType MediaType, page int) (*Filte
 
 // GameDetails returns detailed information about a single game.
 func (client *Client) GameDetails(id int64) (*GameDetails, error) {
-	if err := client.refreshAccess(); err != nil {
-		return nil, err
-	}
 	var result = new(GameDetails)
 	err := client.authenticatedGet(fmt.Sprintf("%s/account/gameDetails/%d.json", EmbedEndpoint, id), result)
 	if err != nil {
