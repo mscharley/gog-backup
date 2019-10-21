@@ -212,6 +212,7 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *backend.GogFile, extr
 			}
 		}
 	}
+	log.Printf("Fetched details for all files")
 
 	close(gameDownload)
 	close(extraDownload)
