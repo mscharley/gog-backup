@@ -88,7 +88,7 @@ func main() {
 	gameDownload := make(chan *backend.GogFile)
 	extraDownload := make(chan *backend.GogFile, 10)
 	progressBar := mpb.New(
-		mpb.WithRefreshRate(180 * time.Millisecond),
+		mpb.WithRefreshRate(250 * time.Millisecond),
 	)
 
 	go signalHandler(finished)
@@ -154,9 +154,9 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *backend.GogFile, extr
 			games = append(games, struct {
 				Path    string
 				Details *gog.GameDetails
-			}{"/" + safePath(result.Title), result})
+			}{safePath(result.Title), result})
 			for i := 0; i < len(games); i++ {
-				path := games[i].Path[1:]
+				basepath := games[i].Path
 				game := games[i].Details
 
 				for _, extra := range game.Extras {
@@ -164,7 +164,7 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *backend.GogFile, extr
 						Name:      fmt.Sprintf("%s %s", color.LightPurple("Extra for "+game.Title+": "+extra.Name), color.LightYellow("["+extra.Size+"]")),
 						PlainName: "Extra for " + game.Title + ": " + extra.Name,
 						URL:       gog.EmbedEndpoint + extra.ManualDownloadURL,
-						File:      path + "/Extras",
+						File:      path.Join(basepath, "Extras"),
 						Version:   extra.Version,
 					}
 				}
@@ -177,7 +177,7 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *backend.GogFile, extr
 							PlainName: d.Name,
 							Platform:  "Windows",
 							URL:       gog.EmbedEndpoint + d.ManualDownloadURL,
-							File:      path + "/Windows",
+							File:      path.Join(basepath, "Windows"),
 							Version:   d.Version,
 						}
 					}
@@ -187,7 +187,7 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *backend.GogFile, extr
 							PlainName: d.Name,
 							Platform:  "Mac",
 							URL:       gog.EmbedEndpoint + d.ManualDownloadURL,
-							File:      path + "/Mac",
+							File:      path.Join(basepath, "Mac"),
 							Version:   d.Version,
 						}
 					}
@@ -197,7 +197,7 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *backend.GogFile, extr
 							PlainName: d.Name,
 							Platform:  "Linux",
 							URL:       gog.EmbedEndpoint + d.ManualDownloadURL,
-							File:      path + "/Linux",
+							File:      path.Join(basepath, "Linux"),
 							Version:   d.Version,
 						}
 					}
@@ -207,7 +207,7 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *backend.GogFile, extr
 					games = append(games, struct {
 						Path    string
 						Details *gog.GameDetails
-					}{path + "/" + safePath(dlc.Title), dlc})
+					}{path.Join(basepath, safePath(dlc.Title)), dlc})
 				}
 			}
 		}
