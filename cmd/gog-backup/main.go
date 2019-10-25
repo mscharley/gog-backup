@@ -35,7 +35,10 @@ var (
 	refreshToken   = flag.String("refresh-token", "", "A refresh token for the GoG API.")
 	retries        = flag.Int("retries", 3, "How many times to retry downloading a file before giving up.")
 	cleanupTimeout = flag.Int64("cleanup-timeout", 300, "How long in seconds to allow current downloads to finish.")
-	progress       = flag.Bool("progress", true, "Display progress bars")
+
+	debug    = flag.Bool("debug", false, "Display debug messages.")
+	dryRun   = flag.Bool("dry-run", false, "Do a dry run without actually backing up files.")
+	progress = flag.Bool("progress", true, "Display progress bars.")
 
 	gameDownloads  = flag.Int("game-downloads", 2, "How many game downloads to do concurrently.")
 	extraDownloads = flag.Int("extra-downloads", 2, "How many extras to download concurrently.")
@@ -43,9 +46,22 @@ var (
 	limitUpload    = flag.Int("limit-upload", 0, "Upload limit in KiB/s (default: unlimited)")
 )
 
+type nullWriter struct{}
+
+func (n *nullWriter) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
 func main() {
 	iniflags.Parse()
 	if !terminal.IsTerminal(int(os.Stdout.Fd())) {
+		*progress = false
+	}
+	if !*debug {
+		log.SetOutput(&nullWriter{})
+	}
+	if *dryRun && *progress {
+		log.Printf("Disabling progress indications as this is a dry run.")
 		*progress = false
 	}
 
@@ -255,26 +271,26 @@ func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progre
 			reader = ratelimit.Reader(reader, downloadBucket)
 		}
 
+		var platform string
+		if d.Platform != "" {
+			platform = " " + "[" + d.Platform + "]"
+		}
+
 		// Check for version information from last time.
 		versionFile := path.Join(basepath, "."+filename+".version")
 		if d.Version != "" {
 			if lastVersion, _ := handler.ReadFile(versionFile); string(lastVersion) == d.Version {
-				log.Printf("Skipping %s as it is already up to date.\n", d.PlainName)
+				log.Printf("Skipping %s%s as it is already up to date.\n", d.PlainName, platform)
 				readerTmp.Close()
 				return true
 			}
 		} else if info, _ := handler.FileExists(path.Join(basepath, filename)); info {
-			log.Printf("Skipping %s as it is already backed up and isn't versioned.\n", d.PlainName)
+			log.Printf("Skipping %s%s as it is already backed up and isn't versioned.\n", d.PlainName, platform)
 			readerTmp.Close()
 			return true
 		}
 
 		if *progress {
-			var platform string
-			if d.Platform != "" {
-				platform = " " + "[" + d.Platform + "]"
-			}
-
 			bar := p.AddBar(*contentLength, mpb.BarStyle("[=>-|"),
 				mpb.BarRemoveOnComplete(),
 				mpb.PrependDecorators(
@@ -303,20 +319,28 @@ func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progre
 		}
 
 		defer readerTmp.Close()
-		err = handler.TransferFile(reader, basepath, filename)
+		if !*dryRun {
+			err = handler.TransferFile(reader, basepath, filename)
 
-		if err != nil {
-			log.Printf("Unable to download file: %+v", err)
-			return false
-		}
-
-		if d.Version != "" {
-			// Save version information for next time.
-			err = handler.WriteFile(versionFile, d.Version)
 			if err != nil {
-				log.Printf("Unable to save version file: %+v", err)
-				// Good enough for this run through - we'll redownload next time and retry saving the version file then.
-				return true
+				log.Printf("Unable to download file: %+v", err)
+				return false
+			}
+
+			if d.Version != "" {
+				// Save version information for next time.
+				err = handler.WriteFile(versionFile, d.Version)
+				if err != nil {
+					log.Printf("Unable to save version file: %+v", err)
+					// Good enough for this run through - we'll redownload next time and retry saving the version file then.
+					return true
+				}
+			}
+
+			if *progress {
+				log.Printf("%s%s: done", d.PlainName, platform)
+			} else {
+				fmt.Printf("%s: done\n", d.Name)
 			}
 		}
 
