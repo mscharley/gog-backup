@@ -99,7 +99,7 @@ func main() {
 		log.Fatalf("Error loading the backend (%s): %+v", *backendOpt, err)
 	}
 
-	finished := make(chan bool)
+	finished := make(chan bool, 1)
 	gameInfo := make(chan int64)
 	gameDownload := make(chan *backend.GogFile)
 	extraDownload := make(chan *backend.GogFile, 10)
@@ -118,7 +118,10 @@ func main() {
 	for i := 0; i < *extraDownloads; i++ {
 		go downloadFiles(retries, downloadBucket, progressBar, backendHandler, extraDownload, waitGroup, client)
 	}
+
+	log.Printf("Waiting for threads to complete.")
 	waitGroup.Wait()
+	log.Printf("Closing main().")
 }
 
 func generateGames(games chan<- int64, finished <-chan bool, client *gog.Client) {
@@ -128,9 +131,9 @@ func generateGames(games chan<- int64, finished <-chan bool, client *gog.Client)
 	for page < totalPages {
 		page++
 		if page == 1 {
-			log.Printf("Fetching page %d\n", page)
+			log.Printf("Fetching page %d", page)
 		} else {
-			log.Printf("Fetching page %d/%d\n", page, totalPages)
+			log.Printf("Fetching page %d/%d", page, totalPages)
 		}
 		result, err := client.GetFilteredProducts(gog.GameMediaType, page)
 		if err != nil {
