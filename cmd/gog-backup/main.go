@@ -78,12 +78,15 @@ func main() {
 	var backendHandler backend.Handler
 	var downloadBucket *ratelimit.Bucket
 	var uploadBucket *ratelimit.Bucket
+	var progressBar *mpb.Progress
+	var gameBar *mpb.Bar
+	var filesBar *mpb.Bar
 
 	if *limitDownload > 0 {
 		downloadBucket = ratelimit.NewBucketWithRate(float64(*limitDownload*1024), int64(*limitDownload*1024))
 	}
 	if *limitUpload > 0 {
-		uploadBucket = ratelimit.NewBucketWithRate(float64(*limitUpload*1024), int64(*limitDownload*1024))
+		uploadBucket = ratelimit.NewBucketWithRate(float64(*limitUpload*1024), int64(*limitUpload*1024))
 	}
 
 	switch *backendOpt {
@@ -101,30 +104,54 @@ func main() {
 
 	finished := make(chan bool, 1)
 	gameInfo := make(chan int64)
-	gameDownload := make(chan *backend.GogFile)
-	extraDownload := make(chan *backend.GogFile, 10)
-	progressBar := mpb.New(
-		mpb.WithRefreshRate(250 * time.Millisecond),
-	)
+	gameDownload := make(chan *backend.GogFile, 500)
+	extraDownload := make(chan *backend.GogFile, 500)
+	if *progress {
+		progressBar = mpb.New(
+			mpb.WithRefreshRate(250 * time.Millisecond),
+		)
+	}
+	if progressBar != nil {
+		gameBar = progressBar.AddBar(1, mpb.BarStyle("[=>-]"),
+			mpb.BarRemoveOnComplete(),
+			mpb.PrependDecorators(
+				decor.Name("Games processed "),
+				decor.CountersNoUnit("[%d / %d]"),
+			),
+		)
+	}
+	if progressBar != nil {
+		filesBar = progressBar.AddBar(1, mpb.BarStyle("[=>-]"),
+			mpb.BarRemoveOnComplete(),
+			mpb.PrependDecorators(
+				decor.Name("Files processed "),
+				decor.CountersNoUnit("[%d / %d]"),
+			),
+		)
+	}
 
 	go signalHandler(finished)
-	go generateGames(gameInfo, finished, client)
-	go fetchDetails(gameInfo, gameDownload, extraDownload, client)
+	go generateGames(gameInfo, finished, gameBar, client)
+	go fetchDetails(gameInfo, gameDownload, extraDownload, filesBar, client)
 
 	waitGroup.Add(*gameDownloads + *extraDownloads)
 	for i := 0; i < *gameDownloads; i++ {
-		go downloadFiles(retries, downloadBucket, progressBar, backendHandler, gameDownload, waitGroup, client)
+		go downloadFiles(retries, downloadBucket, progressBar, filesBar, backendHandler, gameDownload, waitGroup, client)
 	}
 	for i := 0; i < *extraDownloads; i++ {
-		go downloadFiles(retries, downloadBucket, progressBar, backendHandler, extraDownload, waitGroup, client)
+		go downloadFiles(retries, downloadBucket, progressBar, filesBar, backendHandler, extraDownload, waitGroup, client)
 	}
 
 	log.Printf("Waiting for threads to complete.")
 	waitGroup.Wait()
+	if progressBar != nil {
+		gameBar.SetTotal(0, true)
+		filesBar.SetTotal(0, true)
+	}
 	log.Printf("Closing main().")
 }
 
-func generateGames(games chan<- int64, finished <-chan bool, client *gog.Client) {
+func generateGames(games chan<- int64, finished <-chan bool, bar *mpb.Bar, client *gog.Client) {
 	page := 0
 	totalPages := 1
 	defer close(games)
@@ -141,12 +168,20 @@ func generateGames(games chan<- int64, finished <-chan bool, client *gog.Client)
 			return
 		}
 
+		if bar != nil {
+			bar.SetTotal(int64(result.TotalProducts), false)
+		}
 		totalPages = result.TotalPages
 		for _, product := range result.Products {
 			select {
 			case games <- product.ID:
-				// Do nothing, keep looping.
+				if bar != nil {
+					bar.Increment()
+				}
 			case _ = <-finished:
+				if bar != nil {
+					bar.SetTotal(int64(result.TotalProducts), true)
+				}
 				return
 			}
 		}
@@ -159,7 +194,8 @@ func safePath(path string) string {
 		":", " -", -1)
 }
 
-func fetchDetails(games <-chan int64, gameDownload chan<- *backend.GogFile, extraDownload chan<- *backend.GogFile, client *gog.Client) {
+func fetchDetails(games <-chan int64, gameDownload chan<- *backend.GogFile, extraDownload chan<- *backend.GogFile, bar *mpb.Bar, client *gog.Client) {
+	totalFiles := 0
 	for id := range games {
 		log.Printf("Fetching details for %d", id)
 		result, err := client.GameDetails(id)
@@ -177,6 +213,10 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *backend.GogFile, extr
 			for i := 0; i < len(games); i++ {
 				basepath := games[i].Path
 				game := games[i].Details
+				totalFiles += len(game.Extras)
+				if bar != nil {
+					bar.SetTotal(int64(totalFiles), false)
+				}
 
 				for _, extra := range game.Extras {
 					extraDownload <- &backend.GogFile{
@@ -190,6 +230,10 @@ func fetchDetails(games <-chan int64, gameDownload chan<- *backend.GogFile, extr
 
 				if len(game.Downloads) > 0 {
 					download := game.Downloads[0]
+					totalFiles += len(download.Platforms.Windows) + len(download.Platforms.Mac) + len(download.Platforms.Linux)
+					if bar != nil {
+						bar.SetTotal(int64(totalFiles), false)
+					}
 					for _, d := range download.Platforms.Windows {
 						gameDownload <- &backend.GogFile{
 							Name:      fmt.Sprintf("%s %s %s", color.LightPurple(d.Name), color.Red("[Windows]"), color.LightYellow("["+d.Size+"]")),
@@ -254,7 +298,7 @@ func signalHandler(finished chan<- bool) {
 	}
 }
 
-func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progress, handler backend.Handler, downloads <-chan *backend.GogFile, waitGroup *sync.WaitGroup, client *gog.Client) {
+func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progress, filesBar *mpb.Bar, handler backend.Handler, downloads <-chan *backend.GogFile, waitGroup *sync.WaitGroup, client *gog.Client) {
 	prefix := handler.GetPrefix()
 	displayPrefix := handler.GetDisplayPrefix()
 
@@ -293,7 +337,7 @@ func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progre
 			return true
 		}
 
-		if *progress {
+		if p != nil {
 			bar := p.AddBar(*contentLength, mpb.BarStyle("[=>-|"),
 				mpb.BarRemoveOnComplete(),
 				mpb.PrependDecorators(
@@ -359,6 +403,9 @@ func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progre
 
 		for i := 1; i <= *retries; i++ {
 			if loop(d, i, basepath) {
+				if filesBar != nil {
+					filesBar.Increment()
+				}
 				break
 			}
 		}
