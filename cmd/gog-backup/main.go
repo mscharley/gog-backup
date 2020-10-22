@@ -52,6 +52,16 @@ func (n *nullWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+func writeLog(progress *mpb.Progress, msg string) {
+	if progress == nil {
+		fmt.Printf("%s\n", msg)
+	} else {
+		progress.Add(0, mpb.BarFillerFunc(func(w io.Writer, _ int, st decor.Statistics) {
+			fmt.Fprintf(w, fmt.Sprintf("%%.%ds", st.AvailableWidth-2), msg)
+		})).SetTotal(0, true)
+	}
+}
+
 func main() {
 	iniflags.Parse()
 	if !terminal.IsTerminal(int(os.Stdout.Fd())) {
@@ -59,6 +69,10 @@ func main() {
 	}
 	if !*debug {
 		log.SetOutput(&nullWriter{})
+	}
+	if *debug && *progress {
+		log.Printf("Disabling progress indications as it is incompatible with debug output.")
+		*progress = false
 	}
 	if *dryRun && *progress {
 		log.Printf("Disabling progress indications as this is a dry run.")
@@ -108,12 +122,13 @@ func main() {
 	extraDownload := make(chan *backend.GogFile, 500)
 	if *progress {
 		progressBar = mpb.New(
-			mpb.WithRefreshRate(250 * time.Millisecond),
+			mpb.PopCompletedMode(),
+			mpb.WithRefreshRate(250*time.Millisecond),
 		)
 	}
 	if progressBar != nil {
 		gameBar = progressBar.AddBar(1, mpb.BarStyle("[=>-]"),
-			mpb.BarRemoveOnComplete(),
+			mpb.BarNoPop(),
 			mpb.PrependDecorators(
 				decor.Name("Games processed "),
 				decor.CountersNoUnit("[%d / %d]"),
@@ -122,7 +137,7 @@ func main() {
 	}
 	if progressBar != nil {
 		filesBar = progressBar.AddBar(1, mpb.BarStyle("[=>-]"),
-			mpb.BarRemoveOnComplete(),
+			mpb.BarNoPop(),
 			mpb.PrependDecorators(
 				decor.Name("Files processed "),
 				decor.CountersNoUnit("[%d / %d]"),
@@ -147,6 +162,7 @@ func main() {
 	if progressBar != nil {
 		gameBar.SetTotal(0, true)
 		filesBar.SetTotal(0, true)
+		progressBar.Wait()
 	}
 	log.Printf("Closing main().")
 }
@@ -305,8 +321,13 @@ func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progre
 	loop := func(d *backend.GogFile, attempt int, basepath string) bool {
 		filename, readerTmp, contentLength, err := client.DownloadFile(d.URL)
 
+		var platform string
+		if d.Platform != "" {
+			platform = " " + "[" + d.Platform + "]"
+		}
+
 		if err != nil {
-			log.Printf("Unable to connect to GoG: %+v", err)
+			writeLog(p, fmt.Sprintf("[%d] Unable to connect to GoG for %s%s (%s): %#v\n", attempt, d.PlainName, platform, d.URL, err))
 			return false
 		}
 		if contentLength == nil {
@@ -316,11 +337,6 @@ func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progre
 		var reader io.Reader = readerTmp
 		if downloadBucket != nil {
 			reader = ratelimit.Reader(reader, downloadBucket)
-		}
-
-		var platform string
-		if d.Platform != "" {
-			platform = " " + "[" + d.Platform + "]"
 		}
 
 		// Check for version information from last time.
@@ -339,6 +355,7 @@ func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progre
 
 		if p != nil {
 			bar := p.AddBar(*contentLength, mpb.BarStyle("[=>-|"),
+				mpb.BarNoPop(),
 				mpb.BarRemoveOnComplete(),
 				mpb.PrependDecorators(
 					decor.Name(fmt.Sprintf("[A%d] %s%s", attempt, d.PlainName, platform)),
@@ -370,7 +387,7 @@ func downloadFiles(retries *int, downloadBucket *ratelimit.Bucket, p *mpb.Progre
 			err = handler.TransferFile(reader, basepath, filename)
 
 			if err != nil {
-				log.Printf("Unable to download file: %+v", err)
+				writeLog(p, fmt.Sprintf("[%d] Unable to download file for %s%s (%s): %#v", attempt, d.PlainName, platform, d.URL, err))
 				return false
 			}
 
