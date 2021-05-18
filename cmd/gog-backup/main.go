@@ -20,8 +20,8 @@ import (
 	"github.com/mscharley/gog-backup/internal/gog-backup/backend/local"
 	"github.com/mscharley/gog-backup/internal/gog-backup/backend/s3"
 	"github.com/mscharley/gog-backup/pkg/gog"
-	"github.com/vbauerster/mpb"
-	"github.com/vbauerster/mpb/decor"
+	"github.com/vbauerster/mpb/v5"
+	"github.com/vbauerster/mpb/v5/decor"
 	"github.com/vharitonsky/iniflags"
 	"golang.org/x/crypto/ssh/terminal"
 )
