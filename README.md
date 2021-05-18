@@ -17,6 +17,12 @@ Backups for games and other media attached to your GoG.com account.
 go get github.com/mscharley/gog-backup/cmd/gog-backup
 ```
 
+## Docker
+
+```console
+docker run -t mscharley/gog-backup -v gog-backup.ini:/etc/gog-backup.ini
+```
+
 ## Usage
 
 ```console

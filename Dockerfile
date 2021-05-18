@@ -6,4 +6,5 @@ COPY . .
 RUN go get -d -v ./...
 RUN go install -v ./...
 
-CMD ["gog-backup"]
+ENTRYPOINT [ "gog-backup" ]
+CMD [ "-config", "/etc/gog-backup.ini" ]
