@@ -27,7 +27,7 @@ func (h *handler) GetPrefix() string {
 }
 
 func (h *handler) GetDisplayPrefix() string {
-	return *targetDir
+	return ""
 }
 
 func (h *handler) ReadFile(filename string) (string, error) {
