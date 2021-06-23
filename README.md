@@ -20,7 +20,7 @@ go get github.com/mscharley/gog-backup/cmd/gog-backup
 ## Docker
 
 ```console
-docker run -t ghcr.io/mscharley/gog-backup -v gog-backup.ini:/etc/gog-backup.ini
+docker run -t -v gog-backup.ini:/etc/gog-backup.ini ghcr.io/mscharley/gog-backup
 ```
 
 ## Usage
